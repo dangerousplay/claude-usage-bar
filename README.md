@@ -2,14 +2,23 @@
 
 A colorful status line and `/usage-bar:usage` report for Claude Code:
 
+Collapsed (default) — one line with what matters most:
+
 ```
-◆ Opus 5.5 │ ████████████░░░░░░░░░░░░░░░░░░░░ 37% 74.2k/200k
-■ sys 40.4k  ■ you 436  ■ claude 186  ■ calls 25.3k  ■ results 7.8k  ░ free 126k
-⟲ cache read 522k  ✎ cache write 40.1k │ in 20  out 26.9k │ reqs 10 │ $1.50
+◆ Opus 5.5 │ ███░░░░░░░░░░░░░░░░░ 16% 156k/1.00M │ ⟲ 6.56M ✎ 121k ↑ 81.4k $3.91 │ 5h 18% · week 20% (session <1%)  ▸ /usage-bar:expand
+```
+
+Expanded (`/usage-bar:expand`) — adds detail lines:
+
+```
+■ sys 40.4k  ■ you 623  ■ claude 6.2k  ■ calls 74.2k  ■ results 34.6k  ░ free 844k
+⟲ cache read 6.56M  ✎ cache write 121k (5m 0 · 1h 121k)  hit 98% │ in 126  out 81.4k (thinking 19.7k) │ reqs 63
 ⚙ mcp 25 calls │ openviking 14 · chrome 11 │ results 22.7k │ last openviking/search 2m ago
 🧠 memory ↓ read 9 (6.1k)  ↑ write 5 (1.2k) │ last add_memory 4m ago
-week ━━━━━━━───────── 42%  this session ~0.84%  resets 2d 23h │ 5h 18%
+5h ━━──────── 18% +1 session ↻ 59m │ week ━━──────── 20% session <1% ↻ 4d 23h
 ```
+
+Warnings stay visible even when collapsed: context ≥ 80% (compaction soon) and MCP errors from the last 10 minutes. `⟲` is cache read, `✎` cache write, `↑` output tokens.
 
 - **Context bar**: each category has its own color (system/tools/memory, your messages, Claude replies, tool calls, tool results, free space). The bar shows the % of the window used and the limit.
 - **Cache**: total cache-read and cache-write tokens for the session, including subagents. The report splits writes into 5-minute and 1-hour TTL.
@@ -31,6 +40,7 @@ Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js
 
 | Command | What it does |
 |---|---|
+| `/usage-bar:expand [on|off|hint-off]` | Expand/collapse the status line details (toggles with no argument) |
 | `/usage-bar:usage` | Full report with emoji color bars and tables |
 | `/usage-bar:setup [--plan p] [--compact\|--full] [--remove]` | Install, configure or remove the status line |
 | `/usage-bar:calibrate <pct> [--reset-in "3d 4h"]` | Calibrate the weekly estimate against the real % |

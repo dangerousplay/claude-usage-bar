@@ -47,8 +47,8 @@ if (planIdx >= 0) {
   if (!L.PLAN_BUDGETS[plan]) { console.error('Unknown plan: ' + plan); process.exit(1); }
   patch.plan = plan;
 }
-if (has('--compact')) patch.layout = 'compact';
-if (has('--full')) patch.layout = 'full';
+if (has('--compact')) patch.expanded = false;
+if (has('--full')) patch.expanded = true;
 if (Object.keys(patch).length) { L.saveConfig(patch); console.log('Config updated: ' + JSON.stringify(patch)); }
 
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');

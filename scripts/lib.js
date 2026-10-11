@@ -32,8 +32,9 @@ const DEFAULT_CONFIG = {
   weeklyBudgetUsd: null, // set by calibration
   calibratedAt: null,
   weekResetAt: null, // ISO time of a known weekly reset; otherwise rolling 7 days
-  barWidth: 32,
-  layout: 'full', // 'full' | 'compact'
+  barWidth: 20,
+  expanded: false, // toggled by /usage-bar:expand
+  hint: true, // show the ▸ /usage-bar:expand hint
   memoryServers: null, // regex for MCP servers treated as memory stores (default matches openviking, mem0, memory...)
   prices: DEFAULT_PRICES,
 };

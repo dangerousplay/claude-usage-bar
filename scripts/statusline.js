@@ -39,46 +39,58 @@ function sessionLabel(w) {
   return '~' + L.fmtPct(w.sessionPct);
 }
 
-function render(input) {
-  const cfg = L.loadConfig();
-  const transcript = (input.transcript_path && require('fs').existsSync(input.transcript_path) && input.transcript_path) || L.findTranscript(input.session_id);
-  const s = L.analyzeSession({ input, transcriptPath: transcript, cfg });
-  let w = null;
-  try { w = L.weeklyEstimate({ input, session: s, cfg }); } catch {}
+const RED = [248, 113, 113], VIOLET = [192, 132, 252], GREEN = [134, 239, 172], TEAL = [45, 212, 191];
 
-  if (input.session_id) L.writeJson(path.join(L.SESSIONS_DIR, input.session_id + '.json'), { at: Date.now(), input });
+/** Always-visible line: context, session tokens, cost and the limits. */
+function headLine(s, w, cfg, sep) {
+  const t = s.totals;
+  let line = bold(fg(PINK, '◆ ' + s.modelName)) + sep +
+    contextBar(s, cfg.barWidth) + ' ' + bold(fg(heat(s.pct), L.fmtPct(s.pct))) + ' ' +
+    dim(`${L.fmtTok(s.used)}/${L.fmtTok(s.size)}`) + sep +
+    fg(CYAN, '⟲ ') + L.fmtTok(t.cacheRead) + ' ' + fg(VIOLET, '✎ ') + L.fmtTok(t.cacheWrite) + ' ' +
+    fg(WHITE, '↑ ') + L.fmtTok(t.output) + ' ' + fg(GREEN, L.fmtUsd(s.reportedCost));
+  if (w) {
+    const parts = [];
+    if (w.fiveHourPct != null) parts.push(dim('5h ') + bold(fg(heat(w.fiveHourPct), L.fmtPct(w.fiveHourPct))));
+    parts.push(dim('week ') + bold(fg(heat(w.weekPct), (w.weekPctIsReal ? '' : '~') + L.fmtPct(w.weekPct))) +
+      dim(' (session ') + sessionLabel(w) + dim(')'));
+    line += sep + parts.join(dim(' · '));
+  }
+  return line;
+}
 
-  const sep = fg(GRAY, ' │ ');
+/** Problems worth seeing even while collapsed. */
+function alerts(s) {
+  const out = [];
+  if (s.pct >= 80) out.push(fg(RED, '⚠ context ' + L.fmtPct(s.pct) + ', compaction soon'));
+  const last = s.mcp.history[s.mcp.history.length - 1];
+  if (last && last.error && Date.now() - last.ts < 10 * 60e3) out.push(fg(RED, `⚠ mcp error ${last.server}/${last.tool}`));
+  return out;
+}
+
+function detailLines(s, w, sep) {
   const t = s.totals;
   const lines = [];
+  lines.push(L.CATEGORIES
+    .filter(c => s.breakdown[c.key] > 0)
+    .map(c => fg(c.rgb, '■ ') + fg(WHITE, c.short + ' ') + dim(L.fmtTok(s.breakdown[c.key] || 0)))
+    .join('  ') + '  ' + fg(GRAY, '░ ') + dim('free ' + L.fmtTok(Math.max(0, s.size - s.used))));
 
-  lines.push(
-    bold(fg(PINK, '◆ ' + s.modelName)) + sep +
-    contextBar(s, cfg.barWidth) + ' ' +
-    bold(fg(heat(s.pct), L.fmtPct(s.pct))) + ' ' +
-    dim(`${L.fmtTok(s.used)}/${L.fmtTok(s.size)}`)
-  );
-
-  if (cfg.layout !== 'compact') {
-    lines.push(L.CATEGORIES
-      .map(c => fg(c.rgb, '■ ') + fg(WHITE, c.short + ' ') + dim(L.fmtTok(s.breakdown[c.key] || 0)))
-      .join('  ') + '  ' + fg(GRAY, '░ ') + dim('free ' + L.fmtTok(Math.max(0, s.size - s.used))));
-  }
-
+  const totalIn = t.input + t.cacheRead + t.cacheWrite;
   lines.push(
     fg(CYAN, '⟲ cache read ') + bold(L.fmtTok(t.cacheRead)) + '  ' +
-    fg([192, 132, 252], '✎ cache write ') + bold(L.fmtTok(t.cacheWrite)) + sep +
-    dim('in ') + L.fmtTok(t.input) + dim('  out ') + L.fmtTok(t.output) + sep +
-    dim('reqs ') + t.requests + sep + fg([134, 239, 172], L.fmtUsd(s.reportedCost))
-  );
+    fg(VIOLET, '✎ cache write ') + bold(L.fmtTok(t.cacheWrite)) + dim(` (5m ${L.fmtTok(t.cacheWrite5m)} · 1h ${L.fmtTok(t.cacheWrite1h)})`) +
+    (totalIn ? dim('  hit ') + L.fmtPct((t.cacheRead / totalIn) * 100) : '') + sep +
+    dim('in ') + L.fmtTok(t.input) + dim('  out ') + L.fmtTok(t.output) +
+    (t.thinking ? dim(` (thinking ${L.fmtTok(t.thinking)})`) : '') + sep +
+    dim('reqs ') + t.requests + (s.subagents ? dim(` · ${s.subagents} subagents`) : ''));
 
   const m = s.mcp;
   if (m.calls) {
-    const TEAL = [45, 212, 191];
     const top = m.servers.slice(0, 3).map(x => fg(WHITE, x.server) + dim(' ' + x.calls)).join(dim(' · '));
     const last = m.history[m.history.length - 1];
     lines.push(fg(TEAL, '⚙ mcp ') + bold(String(m.calls)) + dim(' calls') +
-      (m.errors ? ' ' + fg([248, 113, 113], m.errors + ' err') : '') + sep + top +
+      (m.errors ? ' ' + fg(RED, m.errors + ' err') : '') + sep + top +
       (m.servers.length > 3 ? dim(` +${m.servers.length - 3}`) : '') + sep +
       dim('results ') + L.fmtTok(m.resultTokens) + sep +
       dim('last ') + fg(WHITE, `${last.server}/${last.tool}`) + dim(' ' + L.fmtAgo(last.ts)));
@@ -91,17 +103,37 @@ function render(input) {
   }
 
   if (w) {
-    const tilde = w.weekPctIsReal ? '' : '~';
-    let line = dim('week ') + meter(w.weekPct, 16) + ' ' + bold(fg(heat(w.weekPct), tilde + L.fmtPct(w.weekPct))) +
-      dim('  this session ') + bold(sessionLabel(w)) +
-      dim(w.rolling ? '  rolling 7d' : '  resets ' + L.fmtUntil(w.resetsAt));
+    const parts = [];
     if (w.fiveHourPct != null) {
-      line += sep + dim('5h ') + bold(fg(heat(w.fiveHourPct), L.fmtPct(w.fiveHourPct)));
-      if (w.fiveHourDelta) line += dim(` (+${w.fiveHourDelta} session)`);
+      parts.push(dim('5h ') + meter(w.fiveHourPct, 10) + ' ' + bold(fg(heat(w.fiveHourPct), L.fmtPct(w.fiveHourPct))) +
+        (w.fiveHourDelta ? dim(` +${w.fiveHourDelta} session`) : '') +
+        (w.fiveHourResetsAt ? dim(' ↻ ' + L.fmtUntil(w.fiveHourResetsAt)) : ''));
     }
-    if (!w.calibrated && !w.weekPctIsReal) line += dim('  (uncalibrated)');
-    lines.push(line);
+    parts.push(dim('week ') + meter(w.weekPct, 10) + ' ' + bold(fg(heat(w.weekPct), (w.weekPctIsReal ? '' : '~') + L.fmtPct(w.weekPct))) +
+      dim(' session ') + sessionLabel(w) +
+      dim(w.rolling ? ' ↻ rolling 7d' : ' ↻ ' + L.fmtUntil(w.resetsAt)) +
+      (!w.calibrated && !w.weekPctIsReal ? dim(' (uncalibrated)') : ''));
+    lines.push(parts.join(sep));
   }
+  return lines;
+}
+
+function render(input) {
+  const cfg = L.loadConfig();
+  const transcript = (input.transcript_path && require('fs').existsSync(input.transcript_path) && input.transcript_path) || L.findTranscript(input.session_id);
+  const s = L.analyzeSession({ input, transcriptPath: transcript, cfg });
+  let w = null;
+  try { w = L.weeklyEstimate({ input, session: s, cfg }); } catch {}
+
+  if (input.session_id) L.writeJson(path.join(L.SESSIONS_DIR, input.session_id + '.json'), { at: Date.now(), input });
+
+  const sep = fg(GRAY, ' │ ');
+  const warn = alerts(s);
+  let head = headLine(s, w, cfg, sep);
+  if (warn.length) head += sep + warn.join('  ');
+  if (!cfg.expanded) return head + (cfg.hint ? dim('  ▸ /usage-bar:expand') : '');
+  const lines = [head, ...detailLines(s, w, sep)];
+  if (cfg.hint) lines[lines.length - 1] += dim('  ▾ /usage-bar:expand off');
   return lines.join('\n');
 }
 
