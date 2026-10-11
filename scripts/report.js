@@ -134,12 +134,22 @@ function main() {
   out.push('🟥 this session · ⬛ rest of the week');
   out.push('');
   out.push(`- **This week:** ${w.weekPctIsReal ? '' : '~'}${L.fmtPct(w.weekPct)} ${w.weekPctIsReal ? '(reported by Claude Code)' : '(estimated)'}`);
-  out.push(`- **This session:** ~${L.fmtPct(w.sessionPct)} of the weekly limit`);
-  if (w.fiveHourPct != null) out.push(`- **5-hour window:** ${L.fmtPct(w.fiveHourPct)}${w.fiveHourResetsAt ? ` (resets in ${L.fmtUntil(w.fiveHourResetsAt)})` : ''}`);
+  const since = w.sessionSince ? ` since ${fmtWhen(w.sessionSince)}` : '';
+  out.push(w.sessionPctSource === 'measured'
+    ? `- **This session:** +${L.fmtPct(w.sessionPct)} of the weekly limit (measured from the real weekly %${since})`
+    : w.sessionSince && w.sessionPct < 1
+      ? `- **This session:** <1% (weekly % hasn't ticked up${since}; cost-based estimate ~${L.fmtPct(w.sessionPct)})`
+      : `- **This session:** ~${L.fmtPct(w.sessionPct)} of the weekly limit (estimated from token cost)`);
+  if (w.fiveHourPct != null) out.push(`- **5-hour window:** ${L.fmtPct(w.fiveHourPct)}${w.fiveHourDelta ? ` (+${w.fiveHourDelta}% this session)` : ''}${w.fiveHourResetsAt ? ` · resets in ${L.fmtUntil(w.fiveHourResetsAt)}` : ''}`);
   out.push(`- **Resets in:** ${w.rolling ? 'unknown — using a rolling 7-day window (pass `--reset-in "3d 4h"` to calibrate)' : L.fmtUntil(w.resetsAt)}`);
-  out.push(`- **Week usage (API-equivalent):** ${L.fmtUsd(w.weekCost)} of ~${L.fmtUsd(w.budget)} budget`);
+  out.push(`- **Local Claude Code usage this week (API-equivalent):** ${L.fmtUsd(w.weekCost)} · estimated full week ≈ ${L.fmtUsd(w.budget)}`);
+  if (w.weekPctIsReal && w.calibrationMethod === 'slope' && w.weekCost > 0 &&(w.weekCost / w.budget) * 100 < w.weekPct * 0.6) {
+    out.push(`- ℹ️ Local usage explains only ~${L.fmtPct((w.weekCost / w.budget) * 100)} of the ${L.fmtPct(w.weekPct)}; the rest is probably claude.ai, the desktop app or other machines (the limit is shared).`);
+  }
   out.push(w.calibrated
-    ? `- Calibrated ${cfg.calibratedAt ? new Date(cfg.calibratedAt).toLocaleString('en-US') : ''}`
+    ? `- Calibrated (${w.calibrationMethod === 'slope' ? 'auto, from how fast the weekly % rises' : 'manual'}) ${cfg.calibratedAt ? new Date(cfg.calibratedAt).toLocaleString('en-US') : ''}`
+    : w.weekPctIsReal
+      ? `- Auto-calibrating: the estimate improves once the weekly % has risen 3 points while you use Claude Code.`
     : `- ⚠️ Uncalibrated (using the \`${cfg.plan}\` default). Run \`/usage-bar:calibrate <percent>\` with the weekly % shown at claude.ai/settings/usage.`);
 
   console.log(out.join('\n'));

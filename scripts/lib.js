@@ -23,8 +23,8 @@ const DEFAULT_PRICES = {
   haiku: { in: 1, out: 5 },
 };
 
-// Rough API-equivalent USD per week for each plan. These are guesses — run
-// /usage-bar:calibrate with the % from claude.ai/settings/usage to fix them.
+// Rough API-equivalent USD per week for each plan. These are guesses, replaced by auto
+// calibration (when Claude Code reports rate_limits) or /usage-bar:calibrate.
 const PLAN_BUDGETS = { pro: 120, max5: 600, max20: 1200 };
 
 const DEFAULT_CONFIG = {
@@ -42,7 +42,25 @@ const DEFAULT_CONFIG = {
 function ensureDir(d) { try { fs.mkdirSync(d, { recursive: true }); } catch {} }
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
 function writeJson(p, v) { try { ensureDir(path.dirname(p)); fs.writeFileSync(p, JSON.stringify(v, null, 2)); } catch {} }
-function loadConfig() { return { ...DEFAULT_CONFIG, ...readJson(CONFIG_FILE, {}) }; }
+// Reads the subscription tier Claude Code caches in ~/.claude.json (e.g. default_claude_max_5x).
+function detectPlan() {
+  const j = readJson(path.join(path.dirname(CLAUDE_DIR), '.claude.json'), null) || readJson(path.join(os.homedir(), '.claude.json'), {});
+  const a = j.oauthAccount || {};
+  const tier = String(a.userRateLimitTier || a.organizationRateLimitTier || '').toLowerCase();
+  if (tier.includes('20x')) return 'max20';
+  if (tier.includes('5x')) return 'max5';
+  if (tier.includes('pro')) return 'pro';
+  return null;
+}
+
+function loadConfig() {
+  const user = readJson(CONFIG_FILE, {});
+  const cfg = { ...DEFAULT_CONFIG, ...user };
+  if (!user.plan) cfg.plan = detectPlan() || DEFAULT_CONFIG.plan;
+  // v1.1 saved a ratio-based budget without a method; it over-attributes shared usage, so drop it.
+  if (cfg.weeklyBudgetUsd && !cfg.calibrationMethod) cfg.weeklyBudgetUsd = null;
+  return cfg;
+}
 function saveConfig(patch) { const c = { ...readJson(CONFIG_FILE, {}), ...patch }; writeJson(CONFIG_FILE, c); return { ...DEFAULT_CONFIG, ...c }; }
 function readLines(file) { try { return fs.readFileSync(file, 'utf8').split('\n'); } catch { return []; } }
 
@@ -426,6 +444,29 @@ function weeklyCost(windowStart, cfg, { maxAgeMs = 60e3 } = {}) {
   return cost;
 }
 
+/**
+ * Learns $/% from how the real weekly % moves as local usage grows. The weekly limit
+ * is shared with claude.ai and other machines, so the plain ratio week$/week% would
+ * blame all of that on local usage; the slope between two samples mostly doesn't.
+ */
+function autoCalibrate(windowStart, pct, weekCost, cfg) {
+  const file = path.join(DATA_DIR, 'slope.json');
+  let s = readJson(file, null);
+  if (!s || s.windowStart !== windowStart || pct < s.pct) {
+    s = { windowStart, pct, cost: weekCost, at: Date.now() };
+    writeJson(file, s);
+  }
+  const dPct = pct - s.pct, dCost = weekCost - s.cost;
+  if (dPct >= 3 && dCost > 0) {
+    const budget = dCost / (dPct / 100);
+    if (cfg.calibrationMethod === 'manual' && Date.now() - Date.parse(cfg.calibratedAt) < WEEK) return cfg;
+    if (!cfg.weeklyBudgetUsd || Math.abs(budget - cfg.weeklyBudgetUsd) / cfg.weeklyBudgetUsd > 0.02) {
+      return saveConfig({ weeklyBudgetUsd: +budget.toFixed(2), calibratedAt: new Date().toISOString(), calibrationMethod: 'slope' });
+    }
+  }
+  return cfg;
+}
+
 function weeklyEstimate({ input, session, cfg }) {
   cfg = cfg || loadConfig();
   const { start: windowStart, rolling } = weekWindow(input, cfg);
@@ -436,21 +477,39 @@ function weeklyEstimate({ input, session, cfg }) {
   const five = rl.five_hour;
   const realWeekPct = seven && typeof seven.used_percentage === 'number' ? seven.used_percentage : null;
 
-  // Auto-calibrate whenever Claude Code tells us the real weekly %.
-  if (realWeekPct != null && realWeekPct >= 2 && weekCost > 0) {
-    const budget = weekCost / (realWeekPct / 100);
-    if (!cfg.weeklyBudgetUsd || Math.abs(budget - cfg.weeklyBudgetUsd) / cfg.weeklyBudgetUsd > 0.02) {
-      cfg = saveConfig({ weeklyBudgetUsd: +budget.toFixed(2), calibratedAt: new Date().toISOString() });
-    }
-  }
+  if (realWeekPct != null) cfg = autoCalibrate(windowStart, realWeekPct, weekCost, cfg);
   const budget = cfg.weeklyBudgetUsd || PLAN_BUDGETS[cfg.plan] || PLAN_BUDGETS.max5;
   const calibrated = !!cfg.weeklyBudgetUsd;
   const weekPct = realWeekPct != null ? realWeekPct : (weekCost / budget) * 100;
-  const sessionPct = (session.sessionCost / budget) * 100;
+  const estimatedSessionPct = (session.sessionCost / budget) * 100;
+
+  // Measured session share: weekly % now minus weekly % when we first saw this session.
+  let sessionPct = estimatedSessionPct, sessionPctSource = 'estimated', sessionSince = null, fiveHourDelta = null;
+  const sid = input && input.session_id;
+  if (sid && realWeekPct != null) {
+    const bfile = path.join(SESSIONS_DIR, sid + '.baseline.json');
+    let b = readJson(bfile, null);
+    const weekReset = parseResetAt(seven.resets_at);
+    if (!b || b.weekResetsAt !== weekReset) {
+      b = { at: Date.now(), weekPct: realWeekPct, weekResetsAt: weekReset, cost: session.sessionCost,
+        fivePct: five ? five.used_percentage : null, fiveResetsAt: five ? parseResetAt(five.resets_at) : null };
+      writeJson(bfile, b);
+    }
+    // Usage that happened before the baseline existed can only be estimated.
+    const preBaseline = (b.cost / budget) * 100;
+    const delta = Math.max(0, realWeekPct - b.weekPct);
+    sessionPct = delta >= 1 ? delta + preBaseline : Math.min(estimatedSessionPct, 0.99 + preBaseline);
+    sessionPctSource = delta >= 1 ? 'measured' : 'estimated';
+    sessionSince = b.at;
+    if (five && b.fivePct != null && b.fiveResetsAt === parseResetAt(five.resets_at)) {
+      fiveHourDelta = Math.max(0, five.used_percentage - b.fivePct);
+    }
+  }
 
   return {
     windowStart, rolling, resetsAt: windowStart + WEEK, weekMcp, weekCost, budget, calibrated,
-    weekPct, weekPctIsReal: realWeekPct != null, sessionPct,
+    calibrationMethod: cfg.calibrationMethod || (calibrated ? 'manual' : null),
+    weekPct, weekPctIsReal: realWeekPct != null, sessionPct, sessionPctSource, sessionSince, fiveHourDelta,
     fiveHourPct: five && typeof five.used_percentage === 'number' ? five.used_percentage : null,
     fiveHourResetsAt: five ? parseResetAt(five.resets_at) : null,
   };
@@ -463,7 +522,7 @@ function calibrate(pct, cfg) {
   if (!(pct > 0)) throw new Error('Percentage must be > 0');
   if (!(weekCost > 0)) throw new Error('No usage found in the current weekly window yet');
   const budget = weekCost / (pct / 100);
-  saveConfig({ weeklyBudgetUsd: +budget.toFixed(2), calibratedAt: new Date().toISOString() });
+  saveConfig({ weeklyBudgetUsd: +budget.toFixed(2), calibratedAt: new Date().toISOString(), calibrationMethod: 'manual' });
   return { weekCost, budget };
 }
 

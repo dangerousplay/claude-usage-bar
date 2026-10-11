@@ -40,9 +40,10 @@ Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js
 - **Context used** = `input + cache_read + cache_creation` tokens of the latest main-thread request (or `context_window.current_usage` when Claude Code provides it).
 - **Breakdown**: the context of the first request, minus the first prompt, is treated as the fixed prefix (system prompt, tool definitions, CLAUDE.md, skills, MCP). The remaining tokens are split across message types by their character counts, so this part is an estimate.
 - **Weekly %**: Anthropic doesn't publish the limits as token counts. Every request in `~/.claude/projects/**/*.jsonl` is weighted by API list price (cache reads ×0.1, 5m writes ×1.25, 1h writes ×2), which gives an "API-equivalent $" figure.
-  - If Claude Code passes `rate_limits.seven_day` to the status line, that real % is shown and used to **auto-calibrate** the budget.
-  - Otherwise run `/usage-bar:calibrate 37` with the weekly % from claude.ai/settings/usage. The budget becomes `week_cost / 0.37`.
-  - Until it is calibrated, a rough default per plan is used, shown with `~` and "(uncalibrated)".
-  - Session % = session cost ÷ weekly budget.
+  - Recent Claude Code versions pass `rate_limits` (weekly and 5-hour %) to the status line. When they do, the real weekly % is shown.
+  - **Session %, measured**: the plugin records the weekly % the first time it sees a session. It then shows how much that % has risen since (`+3%`), and the same for the 5-hour window. The value only changes in whole-percent steps, so it shows `<1%` until the first step.
+  - **Auto-calibration**: the limit is shared with claude.ai, the desktop app and other machines. So the plugin learns from how fast the weekly % rises as local cost grows (needs a 3-point rise), not from the total ratio.
+  - If Claude Code doesn't pass `rate_limits`, run `/usage-bar:calibrate 37` with the weekly % from claude.ai/settings/usage.
+  - Until it is calibrated, a rough default for your plan is used. The plan is detected from `~/.claude.json` (for example `default_claude_max_5x`). The estimate is shown with `~`.
 
 Config and cache are stored in `~/.claude/usage-plugin/` (`config.json`: `plan`, `weeklyBudgetUsd`, `weekResetAt`, `barWidth`, `layout`, `prices`, `memoryServers`).

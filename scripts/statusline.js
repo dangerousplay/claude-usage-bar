@@ -32,6 +32,13 @@ function meter(pct, width) {
   return fg(heat(pct), '━'.repeat(n)) + fg(GRAY, '─'.repeat(width - n));
 }
 
+// Measured shares come from the real weekly % moving; "<1%" means it hasn't ticked yet.
+function sessionLabel(w) {
+  if (w.sessionPctSource === 'measured') return '+' + L.fmtPct(w.sessionPct);
+  if (w.sessionSince && w.sessionPct < 1) return '<1%';
+  return '~' + L.fmtPct(w.sessionPct);
+}
+
 function render(input) {
   const cfg = L.loadConfig();
   const transcript = (input.transcript_path && require('fs').existsSync(input.transcript_path) && input.transcript_path) || L.findTranscript(input.session_id);
@@ -86,9 +93,12 @@ function render(input) {
   if (w) {
     const tilde = w.weekPctIsReal ? '' : '~';
     let line = dim('week ') + meter(w.weekPct, 16) + ' ' + bold(fg(heat(w.weekPct), tilde + L.fmtPct(w.weekPct))) +
-      dim('  this session ') + bold('~' + L.fmtPct(w.sessionPct)) +
+      dim('  this session ') + bold(sessionLabel(w)) +
       dim(w.rolling ? '  rolling 7d' : '  resets ' + L.fmtUntil(w.resetsAt));
-    if (w.fiveHourPct != null) line += sep + dim('5h ') + bold(fg(heat(w.fiveHourPct), L.fmtPct(w.fiveHourPct)));
+    if (w.fiveHourPct != null) {
+      line += sep + dim('5h ') + bold(fg(heat(w.fiveHourPct), L.fmtPct(w.fiveHourPct)));
+      if (w.fiveHourDelta) line += dim(` (+${w.fiveHourDelta} session)`);
+    }
     if (!w.calibrated && !w.weekPctIsReal) line += dim('  (uncalibrated)');
     lines.push(line);
   }
