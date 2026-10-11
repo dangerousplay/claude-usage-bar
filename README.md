@@ -40,7 +40,7 @@ Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js
 
 | Command | What it does |
 |---|---|
-| `/usage-bar:expand [on|off|hint-off]` | Expand/collapse the status line details (toggles with no argument) |
+| `/usage-bar:expand [on\|off\|hint-off]` | Expand/collapse the status line details (toggles with no argument) |
 | `/usage-bar:usage` | Full report with emoji color bars and tables |
 | `/usage-bar:setup [--plan p] [--compact\|--full] [--remove]` | Install, configure or remove the status line |
 | `/usage-bar:calibrate <pct> [--reset-in "3d 4h"]` | Calibrate the weekly estimate against the real % |
