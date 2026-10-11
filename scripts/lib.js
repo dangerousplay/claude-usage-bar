@@ -24,7 +24,7 @@ const DEFAULT_PRICES = {
 };
 
 // Rough API-equivalent USD per week for each plan. These are guesses — run
-// /claude-usage:calibrate with the % from claude.ai/settings/usage to fix them.
+// /usage-bar:calibrate with the % from claude.ai/settings/usage to fix them.
 const PLAN_BUDGETS = { pro: 120, max5: 600, max20: 1200 };
 
 const DEFAULT_CONFIG = {

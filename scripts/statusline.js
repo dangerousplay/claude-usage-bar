@@ -84,5 +84,5 @@ process.stdin.on('end', () => {
   let input = {};
   try { input = JSON.parse(raw || '{}'); } catch {}
   try { process.stdout.write(render(input)); }
-  catch (e) { process.stdout.write('claude-usage: ' + e.message); }
+  catch (e) { process.stdout.write('usage-bar: ' + e.message); }
 });

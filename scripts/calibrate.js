@@ -6,7 +6,7 @@ const L = require('./lib');
 
 const pct = parseFloat(String(process.argv[2] || '').replace('%', ''));
 if (!(pct > 0)) {
-  console.log('Usage: /claude-usage:calibrate <weekly percent> [reset-in e.g. "3d 4h"]');
+  console.log('Usage: /usage-bar:calibrate <weekly percent> [reset-in e.g. "3d 4h"]');
   process.exit(0);
 }
 

@@ -27,7 +27,7 @@ function main() {
   sid = sid || input.session_id;
   const transcript = (input.transcript_path && fs.existsSync(input.transcript_path) && input.transcript_path) || L.findTranscript(sid);
   if (!transcript) {
-    console.log('No transcript found for this session yet. Send a message first, or install the status line with /claude-usage:setup.');
+    console.log('No transcript found for this session yet. Send a message first, or install the status line with /usage-bar:setup.');
     return;
   }
 
@@ -92,7 +92,7 @@ function main() {
   out.push(`- **Week usage (API-equivalent):** ${L.fmtUsd(w.weekCost)} of ~${L.fmtUsd(w.budget)} budget`);
   out.push(w.calibrated
     ? `- Calibrated ${cfg.calibratedAt ? new Date(cfg.calibratedAt).toLocaleString('en-US') : ''}`
-    : `- ⚠️ Uncalibrated (using the \`${cfg.plan}\` default). Run \`/claude-usage:calibrate <percent>\` with the weekly % shown at claude.ai/settings/usage.`);
+    : `- ⚠️ Uncalibrated (using the \`${cfg.plan}\` default). Run \`/usage-bar:calibrate <percent>\` with the weekly % shown at claude.ai/settings/usage.`);
 
   console.log(out.join('\n'));
 }

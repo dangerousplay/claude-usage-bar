@@ -1,9 +1,10 @@
 {
-  "name": "claude-usage-local",
+  "name": "usage-bar-local",
   "owner": { "name": "GMDAV" },
+  "metadata": { "description": "Local marketplace for the usage-bar status line plugin" },
   "plugins": [
     {
-      "name": "claude-usage",
+      "name": "usage-bar",
       "source": "./",
       "description": "Colorful context/token usage bar with cache stats and weekly limit estimate."
     }

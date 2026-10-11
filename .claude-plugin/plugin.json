@@ -1,5 +1,5 @@
 {
-  "name": "claude-usage",
+  "name": "usage-bar",
   "version": "1.0.0",
   "description": "Colorful status line + report: context window breakdown, cache read/write tokens, and an estimate of your weekly limit usage.",
   "author": { "name": "GMDAV" },

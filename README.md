@@ -1,6 +1,6 @@
-# claude-usage — Claude Code usage bar
+# usage-bar — Claude Code usage bar
 
-A colorful status line and `/claude-usage:usage` report for Claude Code:
+A colorful status line and `/usage-bar:usage` report for Claude Code:
 
 ```
 ◆ Opus 5.5 │ ████████████░░░░░░░░░░░░░░░░░░░░ 37% 74.2k/200k
@@ -17,8 +17,8 @@ week ━━━━━━━───────── 42%  this session ~0.84%  
 
 ```
 /plugin marketplace add ~/projects/claude-usage-plugin
-/plugin install claude-usage@claude-usage-local
-/claude-usage:setup --plan max5        # or pro / max20; writes statusLine to ~/.claude/settings.json
+/plugin install usage-bar@usage-bar-local
+/usage-bar:setup --plan max5        # or pro / max20; writes statusLine to ~/.claude/settings.json
 ```
 
 Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js`.
@@ -27,9 +27,9 @@ Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js
 
 | Command | What it does |
 |---|---|
-| `/claude-usage:usage` | Full report with emoji color bars and tables |
-| `/claude-usage:setup [--plan p] [--compact\|--full] [--remove]` | Install, configure or remove the status line |
-| `/claude-usage:calibrate <pct> [--reset-in "3d 4h"]` | Calibrate the weekly estimate against the real % |
+| `/usage-bar:usage` | Full report with emoji color bars and tables |
+| `/usage-bar:setup [--plan p] [--compact\|--full] [--remove]` | Install, configure or remove the status line |
+| `/usage-bar:calibrate <pct> [--reset-in "3d 4h"]` | Calibrate the weekly estimate against the real % |
 
 ## How the numbers are computed
 
@@ -37,7 +37,7 @@ Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js
 - **Breakdown**: the context of the first request, minus the first prompt, is treated as the fixed prefix (system prompt, tool definitions, CLAUDE.md, skills, MCP). The remaining tokens are split across message types by their character counts, so this part is an estimate.
 - **Weekly %**: Anthropic doesn't publish the limits as token counts. Every request in `~/.claude/projects/**/*.jsonl` is weighted by API list price (cache reads ×0.1, 5m writes ×1.25, 1h writes ×2), which gives an "API-equivalent $" figure.
   - If Claude Code passes `rate_limits.seven_day` to the status line, that real % is shown and used to **auto-calibrate** the budget.
-  - Otherwise run `/claude-usage:calibrate 37` with the weekly % from claude.ai/settings/usage. The budget becomes `week_cost / 0.37`.
+  - Otherwise run `/usage-bar:calibrate 37` with the weekly % from claude.ai/settings/usage. The budget becomes `week_cost / 0.37`.
   - Until it is calibrated, a rough default per plan is used, shown with `~` and "(uncalibrated)".
   - Session % = session cost ÷ weekly budget.
 
