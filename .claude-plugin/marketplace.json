@@ -1,0 +1,11 @@
+{
+  "name": "claude-usage-local",
+  "owner": { "name": "GMDAV" },
+  "plugins": [
+    {
+      "name": "claude-usage",
+      "source": "./",
+      "description": "Colorful context/token usage bar with cache stats and weekly limit estimate."
+    }
+  ]
+}
