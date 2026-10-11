@@ -65,6 +65,24 @@ function render(input) {
     dim('reqs ') + t.requests + sep + fg([134, 239, 172], L.fmtUsd(s.reportedCost))
   );
 
+  const m = s.mcp;
+  if (m.calls) {
+    const TEAL = [45, 212, 191];
+    const top = m.servers.slice(0, 3).map(x => fg(WHITE, x.server) + dim(' ' + x.calls)).join(dim(' · '));
+    const last = m.history[m.history.length - 1];
+    lines.push(fg(TEAL, '⚙ mcp ') + bold(String(m.calls)) + dim(' calls') +
+      (m.errors ? ' ' + fg([248, 113, 113], m.errors + ' err') : '') + sep + top +
+      (m.servers.length > 3 ? dim(` +${m.servers.length - 3}`) : '') + sep +
+      dim('results ') + L.fmtTok(m.resultTokens) + sep +
+      dim('last ') + fg(WHITE, `${last.server}/${last.tool}`) + dim(' ' + L.fmtAgo(last.ts)));
+    if (m.memory.read || m.memory.write) {
+      lines.push(fg([196, 181, 253], '🧠 memory ') +
+        fg(CYAN, '↓ read ') + bold(String(m.memory.read)) + dim(` (${L.fmtTok(m.memory.readTokens)})`) + '  ' +
+        fg([251, 146, 60], '↑ write ') + bold(String(m.memory.write)) + dim(` (${L.fmtTok(m.memory.writeTokens)})`) +
+        sep + dim('last ') + m.memory.last.tool + dim(' ' + L.fmtAgo(m.memory.last.ts)));
+    }
+  }
+
   if (w) {
     const tilde = w.weekPctIsReal ? '' : '~';
     let line = dim('week ') + meter(w.weekPct, 16) + ' ' + bold(fg(heat(w.weekPct), tilde + L.fmtPct(w.weekPct))) +

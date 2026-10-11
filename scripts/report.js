@@ -19,6 +19,12 @@ function latestCachedInput() {
   } catch { return null; }
 }
 
+function fmtWhen(ts) {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? time : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + time;
+}
+
 function main() {
   let sid = arg('--session');
   if (sid && /^\$\{|^\$CLAUDE/.test(sid)) sid = undefined; // unexpanded placeholder
@@ -78,12 +84,54 @@ function main() {
   if (s.subagents) out.push(`| Subagents (included above) | ${s.subagents} runs · ${L.fmtUsd(s.subTotals.cost)} |`);
   out.push('');
 
+  const m = s.mcp;
+  out.push('## ⚙️ MCP tools');
+  out.push('');
+  if (!m.calls) {
+    out.push('_No MCP tool calls in this session yet._');
+  } else {
+    out.push(`**${m.calls} calls** across ${m.servers.length} server(s) · ~${L.fmtTok(m.resultTokens)} result tokens` +
+      (m.errors ? ` · ❌ ${m.errors} errors` : ''));
+    out.push('');
+    out.push('| Server | Calls | Errors | Result tokens | Last used |');
+    out.push('|---|---:|---:|---:|---|');
+    for (const x of m.servers) out.push(`| ${x.server} | ${x.calls} | ${x.errors} | ${L.fmtTok(x.tokens)} | ${L.fmtAgo(x.last)} |`);
+    out.push('');
+    out.push('| Tool | Calls | Errors | Result tokens |');
+    out.push('|---|---:|---:|---:|');
+    for (const x of m.tools.slice(0, 12)) {
+      const tag = x.memory === 'read' ? ' 🧠↓' : x.memory === 'write' ? ' 🧠↑' : '';
+      out.push(`| \`${x.server}/${x.tool}\`${tag} | ${x.calls} | ${x.errors} | ${L.fmtTok(x.tokens)} |`);
+    }
+    if (m.tools.length > 12) out.push(`| _…${m.tools.length - 12} more_ | | | |`);
+    out.push('');
+    if (m.memory.read || m.memory.write) {
+      out.push(`**🧠 Memory:** ↓ ${m.memory.read} reads (~${L.fmtTok(m.memory.readTokens)} tokens loaded) · ↑ ${m.memory.write} writes (~${L.fmtTok(m.memory.writeTokens)} tokens stored)`);
+      out.push('');
+    }
+    out.push('**Recent history**');
+    out.push('');
+    out.push('| When | | Call | Tokens | Result preview |');
+    out.push('|---|---|---|---:|---|');
+    for (const c of m.history.slice(-15).reverse()) {
+      const icon = c.error ? '❌' : c.memory === 'write' ? '🧠↑' : c.memory === 'read' ? '🧠↓' : '✅';
+      const prev = (c.preview || '').replace(/\|/g, '\\|').replace(/`/g, "'");
+      out.push(`| ${fmtWhen(c.ts)} | ${icon} | \`${c.server}/${c.tool}\`${c.sidechain ? ' _(subagent)_' : ''} | ${L.fmtTok(c.resultChars / 4)} | ${prev} |`);
+    }
+  }
+  const wk = Object.entries(w.weekMcp || {}).sort((a, b) => b[1] - a[1]);
+  if (wk.length) {
+    out.push('');
+    out.push('**This week (all sessions):** ' + wk.map(([k, v]) => `${k} ${v}`).join(' · '));
+  }
+  out.push('');
+
   out.push('## 📅 Weekly limit');
   out.push('');
   const filled = Math.round(Math.min(100, w.weekPct) / 5);
   const sessCells = Math.min(filled, Math.max(w.sessionPct > 0.5 ? 1 : 0, Math.round(w.sessionPct / 5)));
-  out.push('🟥'.repeat(sessCells) + '🟫'.repeat(filled - sessCells) + '⬜'.repeat(Math.max(0, 20 - filled)));
-  out.push('🟥 this session · 🟫 rest of the week');
+  out.push('🟥'.repeat(sessCells) + '⬛'.repeat(filled - sessCells) + '⬜'.repeat(Math.max(0, 20 - filled)));
+  out.push('🟥 this session · ⬛ rest of the week');
   out.push('');
   out.push(`- **This week:** ${w.weekPctIsReal ? '' : '~'}${L.fmtPct(w.weekPct)} ${w.weekPctIsReal ? '(reported by Claude Code)' : '(estimated)'}`);
   out.push(`- **This session:** ~${L.fmtPct(w.sessionPct)} of the weekly limit`);

@@ -34,6 +34,7 @@ const DEFAULT_CONFIG = {
   weekResetAt: null, // ISO time of a known weekly reset; otherwise rolling 7 days
   barWidth: 32,
   layout: 'full', // 'full' | 'compact'
+  memoryServers: null, // regex for MCP servers treated as memory stores (default matches openviking, mem0, memory...)
   prices: DEFAULT_PRICES,
 };
 
@@ -111,12 +112,42 @@ function blockChars(b) {
   return JSON.stringify(b).length;
 }
 
+// ---------- MCP ----------
+// Tool names look like mcp__<server>__<tool> (plugin servers: mcp__plugin_<plugin>_<server>__<tool>).
+function parseMcpName(name) {
+  const m = /^mcp__(.+?)__(.+)$/.exec(name || '');
+  if (!m) return null;
+  return { server: m[1].replace(/^plugin_[^_]+_/, ''), tool: m[2] };
+}
+
+const MEMORY_SERVER_RE = /viking|memory|mem0|memo|recall|knowledge|context-db/i;
+const MEMORY_WRITE_RE = /add|write|save|store|commit|create|update|upsert|insert|remember|put|append|delete|remove|forget|import|ingest/i;
+const MEMORY_READ_RE = /read|search|find|get|list|query|recall|retrieve|fetch|ls|tree|glob|grep|abstract|overview|browse|stat/i;
+
+/** Returns 'read' | 'write' | null for memory-style MCP tools (e.g. OpenViking). */
+function memoryOp(server, tool, cfg) {
+  const re = cfg && cfg.memoryServers ? new RegExp(cfg.memoryServers, 'i') : MEMORY_SERVER_RE;
+  if (!re.test(server) && !re.test(tool)) return null;
+  if (MEMORY_WRITE_RE.test(tool)) return 'write';
+  if (MEMORY_READ_RE.test(tool)) return 'read';
+  return 'read';
+}
+
+function resultText(b) {
+  const c = b.content;
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.map(x => (x && x.type === 'text' ? x.text : '')).join(' ');
+  return '';
+}
+
 /**
  * Parses one transcript. Streamed chunks of one API response share a message id
  * and repeat the usage, so we dedupe by id (last one wins).
  */
 function analyzeTranscript(file, cfg) {
-  const chars = { user: 0, assistant: 0, toolUse: 0, toolResult: 0 };
+  const chars = { user: 0, assistant: 0, toolUse: 0, toolResult: 0, mcp: 0 };
+  const mcpCalls = []; // { ts, server, tool, inputChars, resultChars, error, memory, preview }
+  const pending = new Map(); // tool_use id -> call
   let firstContext = null, preFirstChars = 0, lastUsage = null, model = null, compactions = 0;
   const responses = new Map();
 
@@ -140,16 +171,37 @@ function analyzeTranscript(file, cfg) {
         model = msg.model;
         if (firstContext == null) {
           firstContext = contextOf(msg.usage);
-          preFirstChars = chars.user + chars.assistant + chars.toolUse + chars.toolResult;
+          preFirstChars = chars.user + chars.assistant + chars.toolUse + chars.toolResult + chars.mcp;
         }
+      }
+    }
+    const content = typeof msg.content === 'string' ? [msg.content] : (msg.content || []);
+    const ts = Date.parse(o.timestamp) || 0;
+    const mcpResults = new Set();
+    for (const b of content) {
+      if (!b || typeof b !== 'object') continue;
+      if (b.type === 'tool_use') {
+        const p = parseMcpName(b.name);
+        if (p && !pending.has(b.id)) {
+          const call = { ts, ...p, inputChars: JSON.stringify(b.input || {}).length, resultChars: 0, error: false,
+            memory: memoryOp(p.server, p.tool, cfg), sidechain: !!o.isSidechain, preview: '' };
+          pending.set(b.id, call);
+          mcpCalls.push(call);
+        }
+      } else if (b.type === 'tool_result' && pending.has(b.tool_use_id)) {
+        const call = pending.get(b.tool_use_id);
+        call.resultChars = blockChars(b);
+        call.error = !!b.is_error;
+        call.preview = resultText(b).replace(/\s+/g, ' ').slice(0, 80);
+        mcpResults.add(b);
       }
     }
     if (o.isSidechain) continue;
 
-    const content = typeof msg.content === 'string' ? [msg.content] : (msg.content || []);
     for (const b of content) {
       const n = blockChars(b);
-      if (b && b.type === 'tool_result') chars.toolResult += n;
+      if (mcpResults.has(b)) chars.mcp += n;
+      else if (b && b.type === 'tool_result') chars.toolResult += n;
       else if (b && b.type === 'tool_use') chars.toolUse += n;
       else if (o.type === 'assistant') chars.assistant += n;
       else chars.user += n;
@@ -158,7 +210,7 @@ function analyzeTranscript(file, cfg) {
 
   const totals = zeroTotals();
   for (const { u, model: m } of responses.values()) addUsage(totals, u, m, cfg);
-  return { totals, chars, firstContext, preFirstChars, lastUsage, model, compactions };
+  return { totals, chars, firstContext, preFirstChars, lastUsage, model, compactions, mcpCalls };
 }
 
 function subagentFiles(transcriptPath) {
@@ -177,11 +229,12 @@ function findTranscript(sessionId) {
   return null;
 }
 
-function contextWindowSize(input, modelId) {
+function contextWindowSize(input, modelId, used) {
   const cw = input && input.context_window;
   if (cw && cw.context_window_size) return cw.context_window_size;
   const id = String(modelId || (input && input.model && input.model.id) || '').toLowerCase();
-  return /\b1m\b|\[1m\]/.test(id) ? 1_000_000 : 200_000;
+  // Without a size from Claude Code, anything past 200k must be a 1M-context session.
+  return /\b1m\b|\[1m\]/.test(id) || used > 200_000 ? 1_000_000 : 200_000;
 }
 
 const CATEGORIES = [
@@ -190,6 +243,7 @@ const CATEGORIES = [
   { key: 'assistant', label: 'Claude replies', short: 'claude', rgb: [52, 211, 153], emoji: '🟩' },
   { key: 'toolUse', label: 'Tool calls', short: 'calls', rgb: [250, 204, 21], emoji: '🟨' },
   { key: 'toolResult', label: 'Tool results', short: 'results', rgb: [251, 146, 60], emoji: '🟧' },
+  { key: 'mcp', label: 'MCP tool results', short: 'mcp', rgb: [45, 212, 191], emoji: '🟫' },
 ];
 
 /**
@@ -203,10 +257,10 @@ function contextBreakdown(a, used) {
   const baseline = Math.min(used, Math.max(0, (a.firstContext || 0) - Math.round(a.preFirstChars / 4)));
   out.system = baseline;
   const rest = used - baseline;
-  const totalChars = a.chars.user + a.chars.assistant + a.chars.toolUse + a.chars.toolResult;
+  const totalChars = a.chars.user + a.chars.assistant + a.chars.toolUse + a.chars.toolResult + a.chars.mcp;
   if (totalChars === 0) { out.user = rest; return out; }
   let assigned = 0;
-  for (const k of ['assistant', 'toolUse', 'toolResult']) {
+  for (const k of ['assistant', 'toolUse', 'toolResult', 'mcp']) {
     out[k] = Math.round(rest * a.chars[k] / totalChars);
     assigned += out[k];
   }
@@ -220,16 +274,19 @@ function analyzeSession({ input, transcriptPath, cfg }) {
   const totals = main ? { ...main.totals } : zeroTotals();
   const subs = transcriptPath ? subagentFiles(transcriptPath) : [];
   const subTotals = zeroTotals();
+  const mcpCalls = main ? main.mcpCalls.slice() : [];
   for (const f of subs) {
-    const t = analyzeTranscript(f, cfg).totals;
-    for (const k in subTotals) subTotals[k] += t[k];
+    const a = analyzeTranscript(f, cfg);
+    for (const k in subTotals) subTotals[k] += a.totals[k];
+    for (const c of a.mcpCalls) mcpCalls.push({ ...c, sidechain: true });
   }
+  mcpCalls.sort((x, y) => x.ts - y.ts);
   for (const k in totals) totals[k] += subTotals[k];
 
   const cu = input && input.context_window && input.context_window.current_usage;
   const used = cu ? contextOf(cu) : contextOf(main && main.lastUsage);
   const modelId = (input && input.model && input.model.id) || (main && main.model);
-  const size = contextWindowSize(input, modelId);
+  const size = contextWindowSize(input, modelId, used);
   const breakdown = main ? contextBreakdown(main, used) : { system: used };
   const costUsd = input && input.cost && typeof input.cost.total_cost_usd === 'number' ? input.cost.total_cost_usd : totals.cost;
 
@@ -240,6 +297,35 @@ function analyzeSession({ input, transcriptPath, cfg }) {
     breakdown, totals, subTotals, subagents: subs.length,
     compactions: main ? main.compactions : 0,
     sessionCost: totals.cost, reportedCost: costUsd,
+    mcp: summarizeMcp(mcpCalls),
+  };
+}
+
+function summarizeMcp(calls) {
+  const servers = new Map();
+  const tools = new Map();
+  const memory = { read: 0, write: 0, readTokens: 0, writeTokens: 0, last: null };
+  let resultTokens = 0, errors = 0;
+  for (const c of calls) {
+    const tok = Math.round(c.resultChars / 4);
+    resultTokens += tok;
+    if (c.error) errors++;
+    const s = servers.get(c.server) || { server: c.server, calls: 0, errors: 0, tokens: 0, last: 0 };
+    s.calls++; s.errors += c.error ? 1 : 0; s.tokens += tok; s.last = Math.max(s.last, c.ts);
+    servers.set(c.server, s);
+    const key = c.server + '/' + c.tool;
+    const t = tools.get(key) || { server: c.server, tool: c.tool, calls: 0, errors: 0, tokens: 0, memory: c.memory };
+    t.calls++; t.errors += c.error ? 1 : 0; t.tokens += tok;
+    tools.set(key, t);
+    if (c.memory === 'read') { memory.read++; memory.readTokens += tok; memory.last = c; }
+    if (c.memory === 'write') { memory.write++; memory.writeTokens += Math.round(c.inputChars / 4); memory.last = c; }
+  }
+  const byCalls = (a, b) => b.calls - a.calls;
+  return {
+    calls: calls.length, errors, resultTokens, memory,
+    servers: [...servers.values()].sort(byCalls),
+    tools: [...tools.values()].sort(byCalls),
+    history: calls,
   };
 }
 
@@ -273,6 +359,20 @@ function fileEntries(file, cfg) {
   return [...byId.entries()].map(([id, [ts, c]]) => [id, ts, c]);
 }
 
+function fileMcp(file) {
+  const out = [];
+  for (const line of readLines(file)) {
+    if (!line || line.indexOf('"mcp__') === -1) continue;
+    let o; try { o = JSON.parse(line); } catch { continue; }
+    const content = o.type === 'assistant' && o.message && Array.isArray(o.message.content) ? o.message.content : [];
+    for (const b of content) {
+      const p = b && b.type === 'tool_use' && parseMcpName(b.name);
+      if (p) out.push([b.id, Date.parse(o.timestamp) || 0, p.server, p.tool]);
+    }
+  }
+  return out;
+}
+
 function parseResetAt(v) {
   if (v == null) return null;
   if (typeof v === 'number') return v < 1e12 ? v * 1000 : v;
@@ -298,23 +398,31 @@ function weeklyCost(windowStart, cfg, { maxAgeMs = 60e3 } = {}) {
   const prev = readJson(WEEK_RESULT_FILE, null);
   if (prev && prev.windowStart === windowStart && Date.now() - prev.at < maxAgeMs) return prev.cost;
 
-  const cache = readJson(WEEK_CACHE_FILE, { files: {} });
+  let cache = readJson(WEEK_CACHE_FILE, { files: {} });
+  if (cache.v !== 2) cache = { files: {} };
   const files = walkJsonl(PROJECTS_DIR, windowStart, []);
-  const next = { files: {} };
+  const next = { v: 2, files: {} };
   const seen = new Set();
+  const seenMcp = new Set();
+  const mcpServers = {};
   let cost = 0;
   for (const f of files) {
     let rec = cache.files[f.p];
-    if (!rec || rec.mtime !== f.mtime || rec.size !== f.size) rec = { mtime: f.mtime, size: f.size, e: fileEntries(f.p, cfg) };
+    if (!rec || rec.mtime !== f.mtime || rec.size !== f.size) rec = { mtime: f.mtime, size: f.size, e: fileEntries(f.p, cfg), m: fileMcp(f.p) };
     next.files[f.p] = rec;
     for (const [id, ts, c] of rec.e) {
       if (ts < windowStart || seen.has(id)) continue;
       seen.add(id);
       cost += c;
     }
+    for (const [id, ts, server] of rec.m || []) {
+      if (ts < windowStart || seenMcp.has(id)) continue;
+      seenMcp.add(id);
+      mcpServers[server] = (mcpServers[server] || 0) + 1;
+    }
   }
   writeJson(WEEK_CACHE_FILE, next);
-  writeJson(WEEK_RESULT_FILE, { windowStart, at: Date.now(), cost });
+  writeJson(WEEK_RESULT_FILE, { windowStart, at: Date.now(), cost, mcpServers });
   return cost;
 }
 
@@ -322,6 +430,7 @@ function weeklyEstimate({ input, session, cfg }) {
   cfg = cfg || loadConfig();
   const { start: windowStart, rolling } = weekWindow(input, cfg);
   const weekCost = weeklyCost(rolling ? Math.floor(windowStart / 60e3) * 60e3 : windowStart, cfg);
+  const weekMcp = (readJson(WEEK_RESULT_FILE, {}) || {}).mcpServers || {};
   const rl = (input && input.rate_limits) || {};
   const seven = rl.seven_day || rl.weekly;
   const five = rl.five_hour;
@@ -340,7 +449,7 @@ function weeklyEstimate({ input, session, cfg }) {
   const sessionPct = (session.sessionCost / budget) * 100;
 
   return {
-    windowStart, rolling, resetsAt: windowStart + WEEK, weekCost, budget, calibrated,
+    windowStart, rolling, resetsAt: windowStart + WEEK, weekMcp, weekCost, budget, calibrated,
     weekPct, weekPctIsReal: realWeekPct != null, sessionPct,
     fiveHourPct: five && typeof five.used_percentage === 'number' ? five.used_percentage : null,
     fiveHourResetsAt: five ? parseResetAt(five.resets_at) : null,
@@ -367,6 +476,13 @@ function fmtTok(n) {
 }
 function fmtPct(p) { return p >= 10 ? p.toFixed(0) + '%' : p >= 1 ? p.toFixed(1) + '%' : p.toFixed(2) + '%'; }
 function fmtUsd(n) { return '$' + (n >= 100 ? n.toFixed(0) : n.toFixed(2)); }
+function fmtAgo(ms) {
+  const d = Date.now() - ms;
+  if (d < 60e3) return 'just now';
+  if (d < HOUR) return Math.floor(d / 60e3) + 'm ago';
+  if (d < 24 * HOUR) return Math.floor(d / HOUR) + 'h ago';
+  return Math.floor(d / (24 * HOUR)) + 'd ago';
+}
 function fmtUntil(ms) {
   const d = ms - Date.now();
   if (!(d > 0)) return 'now';
@@ -376,6 +492,7 @@ function fmtUntil(ms) {
 
 /** Allocates `width` cells to segments by largest remainder; tiny non-zero segments still get 1 cell. */
 function allocateCells(values, total, width) {
+  total = Math.max(total, values.reduce((a, b) => a + b, 0));
   const raw = values.map(v => (total ? (v / total) * width : 0));
   const cells = raw.map(Math.floor);
   raw.forEach((r, i) => { if (values[i] > 0 && cells[i] === 0 && r > 0.15) cells[i] = 1; });
@@ -390,5 +507,5 @@ module.exports = {
   CLAUDE_DIR, DATA_DIR, SESSIONS_DIR, CATEGORIES, PLAN_BUDGETS,
   loadConfig, saveConfig, readJson, writeJson, findTranscript,
   analyzeSession, weeklyEstimate, calibrate, allocateCells,
-  fmtTok, fmtPct, fmtUsd, fmtUntil,
+  fmtTok, fmtPct, fmtUsd, fmtUntil, fmtAgo,
 };

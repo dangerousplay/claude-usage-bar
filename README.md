@@ -6,11 +6,15 @@ A colorful status line and `/usage-bar:usage` report for Claude Code:
 ◆ Opus 5.5 │ ████████████░░░░░░░░░░░░░░░░░░░░ 37% 74.2k/200k
 ■ sys 40.4k  ■ you 436  ■ claude 186  ■ calls 25.3k  ■ results 7.8k  ░ free 126k
 ⟲ cache read 522k  ✎ cache write 40.1k │ in 20  out 26.9k │ reqs 10 │ $1.50
+⚙ mcp 25 calls │ openviking 14 · chrome 11 │ results 22.7k │ last openviking/search 2m ago
+🧠 memory ↓ read 9 (6.1k)  ↑ write 5 (1.2k) │ last add_memory 4m ago
 week ━━━━━━━───────── 42%  this session ~0.84%  resets 2d 23h │ 5h 18%
 ```
 
 - **Context bar**: each category has its own color (system/tools/memory, your messages, Claude replies, tool calls, tool results, free space). The bar shows the % of the window used and the limit.
 - **Cache**: total cache-read and cache-write tokens for the session, including subagents. The report splits writes into 5-minute and 1-hour TTL.
+- **MCP tools**: calls per server and tool, errors, result tokens (also shown as a separate teal part of the context bar). The report adds a history of recent calls with result previews, plus MCP use across all sessions this week.
+- **Memory read/write**: MCP servers that look like memory stores (OpenViking, mem0, `*memory*`) are split into reads (search/read/find…) and writes (add/commit/store…). Override with `memoryServers` (a regex) in `config.json`.
 - **Weekly limit**: how much of the weekly limit this session has used, and the total for the week.
 
 ## Install
@@ -41,4 +45,4 @@ Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js
   - Until it is calibrated, a rough default per plan is used, shown with `~` and "(uncalibrated)".
   - Session % = session cost ÷ weekly budget.
 
-Config and cache are stored in `~/.claude/usage-plugin/` (`config.json`: `plan`, `weeklyBudgetUsd`, `weekResetAt`, `barWidth`, `layout`, `prices`).
+Config and cache are stored in `~/.claude/usage-plugin/` (`config.json`: `plan`, `weeklyBudgetUsd`, `weekResetAt`, `barWidth`, `layout`, `prices`, `memoryServers`).
