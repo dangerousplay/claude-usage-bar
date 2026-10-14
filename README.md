@@ -28,13 +28,29 @@ Warnings stay visible even when collapsed: context ≥ 80% (compaction soon) and
 
 ## Install
 
+Inside Claude Code:
+
 ```
-/plugin marketplace add ~/projects/claude-usage-plugin
+/plugin marketplace add dangerousplay/claude-usage-bar
 /plugin install usage-bar@usage-bar-local
 /usage-bar:setup --plan max5        # or pro / max20; writes statusLine to ~/.claude/settings.json
 ```
 
-Without the plugin system: `node ~/projects/claude-usage-plugin/scripts/setup.js`.
+Or from a shell:
+
+```
+claude plugin marketplace add dangerousplay/claude-usage-bar
+claude plugin install usage-bar@usage-bar-local
+```
+
+Then restart Claude Code and run `/usage-bar:setup`. Note that setup replaces any existing `statusLine` in `~/.claude/settings.json`.
+
+Without the plugin system:
+
+```
+git clone https://github.com/dangerousplay/claude-usage-bar.git ~/claude-usage-bar
+node ~/claude-usage-bar/scripts/setup.js
+```
 
 ## Commands
 
