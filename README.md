@@ -52,6 +52,16 @@ git clone https://github.com/dangerousplay/claude-usage-bar.git ~/claude-usage-b
 node ~/claude-usage-bar/scripts/setup.js
 ```
 
+## Expand and collapse
+
+Claude Code doesn't let a status line take clicks or keys, so the plugin draws a small toggle above the prompt (`▸ usage details` / `▾ hide usage details`):
+
+- **Mouse**: click it.
+- **Keyboard**: `ctrl+x tab` to focus the row above the prompt, then `e` (or `enter`). `esc` goes back to the prompt.
+- **Command**: `/usage-bar:expand`. This one goes through the model; the toggle doesn't.
+
+The status line redraws right away. To force that, the toggle adds or removes a trailing ` #` (a shell comment) on the `statusLine` command in `~/.claude/settings.json`, because Claude Code re-runs a status line at once only when its command changes.
+
 ## Commands
 
 | Command | What it does |

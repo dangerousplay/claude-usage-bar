@@ -63,6 +63,16 @@ function loadConfig() {
   return cfg;
 }
 function saveConfig(patch) { const c = { ...readJson(CONFIG_FILE, {}), ...patch }; writeJson(CONFIG_FILE, c); return { ...DEFAULT_CONFIG, ...c }; }
+// Claude Code re-runs the status line at once when its command changes (other updates wait
+// for the next message), so flip a trailing shell comment on our command to redraw now.
+function refreshStatusLine() {
+  const p = path.join(CLAUDE_DIR, 'settings.json');
+  const settings = readJson(p, null);
+  const line = settings && settings.statusLine;
+  if (!line || !String(line.command || '').includes('statusline-launcher')) return false;
+  line.command = line.command.endsWith(' #') ? line.command.slice(0, -2) : line.command + ' #';
+  try { fs.writeFileSync(p, JSON.stringify(settings, null, 2) + '\n'); return true; } catch { return false; }
+}
 function readLines(file) { try { return fs.readFileSync(file, 'utf8').split('\n'); } catch { return []; } }
 
 // ---------- pricing ----------
@@ -565,7 +575,7 @@ function allocateCells(values, total, width) {
 
 module.exports = {
   CLAUDE_DIR, DATA_DIR, SESSIONS_DIR, CATEGORIES, PLAN_BUDGETS,
-  loadConfig, saveConfig, readJson, writeJson, findTranscript,
+  loadConfig, saveConfig, refreshStatusLine, readJson, writeJson, findTranscript,
   analyzeSession, weeklyEstimate, calibrate, allocateCells,
   fmtTok, fmtPct, fmtUsd, fmtUntil, fmtAgo,
 };

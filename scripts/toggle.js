@@ -16,3 +16,4 @@ if (arg === 'hint-off' || arg === 'hint-on') {
     ? 'Status line expanded: breakdown, cache/IO details, MCP, memory and limit timers are shown.'
     : 'Status line collapsed to one line: context, session tokens, cost and limits.');
 }
+L.refreshStatusLine();
