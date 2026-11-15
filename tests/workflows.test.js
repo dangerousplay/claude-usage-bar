@@ -61,3 +61,19 @@ test('session totals include workflow agents and plain subagents', () => {
   assert.strictEqual(s.totals.output, 5 + 50 + 10 + 1);
   assert.strictEqual(s.workflows.length, 1);
 });
+
+test('any workflow: name comes from the script meta, also for runs launched from a reused script path', () => {
+  const run2 = path.join(project, 'sess', 'subagents', 'workflows', 'wf_def');
+  fs.mkdirSync(run2, { recursive: true });
+  const script = path.join(project, 'sess', 'workflows', 'scripts', 'whatever-wf_old.js');
+  fs.writeFileSync(script, "export const meta = {\n  name: 'audit-deps',\n  description: 'x',\n}\n");
+  fs.writeFileSync(path.join(run2, 'journal.jsonl'), JSON.stringify({ type: 'started', agentId: 'b1', phase: 'Scan' }) + '\n');
+  fs.writeFileSync(path.join(run2, 'agent-b1.jsonl'), assistant('m4', 'claude-sonnet-5-5', { input_tokens: 7, output_tokens: 3 }) + '\n');
+  const launch = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content:
+    `Workflow launched in background.\nTranscript dir: ${run2}\nScript file: ${script}\n` }] } };
+  fs.appendFileSync(transcript, JSON.stringify(launch) + '\n');
+  const r = L.workflowRuns(transcript).find(x => x.id === 'wf_def');
+  assert.strictEqual(r.name, 'audit-deps');
+  assert.deepStrictEqual(Object.keys(r.byPhase), ['Scan']);
+  assert.strictEqual(r.tokens, 10);
+});

@@ -282,13 +282,36 @@ function cachedTotals(file, cache, next, cfg) {
   return rec;
 }
 
-function workflowName(sessDir, runId) {
+/** `meta.name` from a workflow script, else null. */
+function scriptMetaName(file) {
+  let src; try { src = fs.readFileSync(file, 'utf8').slice(0, 4096); } catch { return null; }
+  const m = src.match(/meta\s*=\s*\{[\s\S]*?\bname\s*:\s*(['"`])([^'"`\n]+)\1/);
+  return m ? m[2] : null;
+}
+
+/**
+ * Display name of a workflow run, independent of which workflow it is: the script's own
+ * `meta.name`. The script is the one named `<name>-<runId>.js`, or, for runs launched from
+ * a reused script path, the "Script file:" the launch result in the session transcript
+ * names for this run's transcript dir. Falls back to the file name, then 'workflow'.
+ */
+function workflowName(sessDir, runId, transcriptPath) {
   const scripts = path.join(sessDir, 'workflows', 'scripts');
+  let file = null;
   try {
     const f = fs.readdirSync(scripts).find(n => n.endsWith('-' + runId + '.js'));
-    if (f) return f.slice(0, -(runId.length + 4));
+    if (f) file = path.join(scripts, f);
   } catch {}
-  return 'workflow';
+  if (!file && transcriptPath) {
+    try {
+      const raw = fs.readFileSync(transcriptPath, 'utf8');
+      const esc = runId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const m = raw.match(new RegExp('workflows/' + esc + '\\\\nScript file: ([^\\\\"]+?\\.js)'));
+      if (m) file = m[1];
+    } catch {}
+  }
+  if (!file) return 'workflow';
+  return scriptMetaName(file) || path.basename(file, '.js').replace(/-wf_[\w-]+$/, '') || 'workflow';
 }
 
 /**
@@ -299,9 +322,10 @@ function workflowName(sessDir, runId) {
 function workflowRuns(transcriptPath, cfg, now = Date.now()) {
   if (!transcriptPath) return [];
   cfg = cfg || loadConfig();
-  const cacheIn = readJson(WF_CACHE_FILE, { v: 1, files: {} });
+  const cacheIn = readJson(WF_CACHE_FILE, { v: 1, files: {}, names: {} });
   const cache = cacheIn.v === 1 ? cacheIn.files : {};
-  const next = {};
+  const names = (cacheIn.v === 1 && cacheIn.names) || {};
+  const next = {}, nextNames = {};
   const runs = [];
   for (const dir of workflowDirs(transcriptPath)) {
     const id = path.basename(dir);
@@ -333,14 +357,16 @@ function workflowRuns(transcriptPath, cfg, now = Date.now()) {
     }
     const running = [...started.keys()].filter(a => !finished.has(a)).length;
     const active = now - updated < WF_ACTIVE_MS;
+    const nameKey = transcriptPath + '#' + id;
+    const name = nextNames[nameKey] = names[nameKey] || workflowName(sessionDir(transcriptPath), id, transcriptPath);
     runs.push({
-      id, name: workflowName(sessionDir(transcriptPath), id),
+      id, name,
       agents: started.size, done: finished.size, running: active ? running : 0,
       stalled: !active && running > 0,
       active, updated, totals, tokens: tokensOf(totals), cost: totals.cost, byPhase, byModel,
     });
   }
-  writeJson(WF_CACHE_FILE, { v: 1, files: next });
+  writeJson(WF_CACHE_FILE, { v: 1, files: next, names: nextNames });
   return runs.sort((x, y) => y.updated - x.updated);
 }
 
