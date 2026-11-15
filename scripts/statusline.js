@@ -59,6 +59,32 @@ function headLine(s, w, cfg, sep) {
   return line;
 }
 
+const AMBER = [251, 191, 36];
+
+/** Compact segment for the newest workflow run that is still active. */
+function workflowSegment(s) {
+  const run = (s.workflows || []).find(r => r.active);
+  if (!run) return '';
+  return fg(AMBER, '⚙ ' + run.name + ' ') +
+    (run.running ? bold(fg(AMBER, run.running + '▶ ')) : '') + dim(run.done + '✓ ') +
+    L.fmtTok(run.tokens) + ' ' + fg(GREEN, L.fmtUsd(run.cost));
+}
+
+/** One line per run touched in the last hour: phases and models with tokens and cost. */
+function workflowLines(s, sep) {
+  const recent = (s.workflows || []).filter(r => r.active || Date.now() - r.updated < 3600e3).slice(0, 2);
+  return recent.map(r => {
+    const phases = Object.entries(r.byPhase)
+      .map(([k, v]) => fg(WHITE, k + ' ') + dim(`${v.agents}× ${L.fmtTok(v.tokens)}`)).join('  ');
+    const models = Object.entries(r.byModel).sort((a, b) => b[1].cost - a[1].cost)
+      .map(([k, v]) => fg(WHITE, k + ' ') + dim(L.fmtUsd(v.cost))).join('  ');
+    const state = r.active ? (r.running ? fg(AMBER, `${r.running} running`) : dim('finishing')) :
+      r.stalled ? fg(RED, 'stopped') : dim('done ' + L.fmtAgo(r.updated));
+    return fg(AMBER, '⚙ wf ' + r.name) + dim(` ${r.id.replace(/^wf_/, '')} `) + state + dim(` · ${r.done}/${r.agents} agents · `) +
+      L.fmtTok(r.tokens) + ' ' + fg(GREEN, L.fmtUsd(r.cost)) + sep + phases + sep + models;
+  });
+}
+
 /** Problems worth seeing even while collapsed. */
 function alerts(s) {
   const out = [];
@@ -84,6 +110,8 @@ function detailLines(s, w, sep) {
     dim('in ') + L.fmtTok(t.input) + dim('  out ') + L.fmtTok(t.output) +
     (t.thinking ? dim(` (thinking ${L.fmtTok(t.thinking)})`) : '') + sep +
     dim('reqs ') + t.requests + (s.subagents ? dim(` · ${s.subagents} subagents`) : ''));
+
+  lines.push(...workflowLines(s, sep));
 
   const m = s.mcp;
   if (m.calls) {
@@ -130,6 +158,8 @@ function render(input) {
   const sep = fg(GRAY, ' │ ');
   const warn = alerts(s);
   let head = headLine(s, w, cfg, sep);
+  const wf = workflowSegment(s);
+  if (wf) head += sep + wf;
   if (warn.length) head += sep + warn.join('  ');
   if (!cfg.expanded) return head + (cfg.hint ? dim('  ▸ /usage-bar:expand') : '');
   const lines = [head, ...detailLines(s, w, sep)];

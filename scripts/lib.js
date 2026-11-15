@@ -239,13 +239,112 @@ function analyzeTranscript(file, cfg) {
 
   const totals = zeroTotals();
   for (const { u, model: m } of responses.values()) addUsage(totals, u, m, cfg);
-  return { totals, chars, firstContext, preFirstChars, lastUsage, model, compactions, mcpCalls };
+  let lastModel = model;
+  for (const r of responses.values()) lastModel = r.model || lastModel;
+  return { totals, chars, firstContext, preFirstChars, lastUsage, model, lastModel, compactions, mcpCalls };
 }
 
-function subagentFiles(transcriptPath) {
-  const dir = path.join(path.dirname(transcriptPath), path.basename(transcriptPath, '.jsonl'), 'subagents');
-  try { return fs.readdirSync(dir).filter(f => f.endsWith('.jsonl')).map(f => path.join(dir, f)); } catch { return []; }
+function sessionDir(transcriptPath) {
+  return path.join(path.dirname(transcriptPath), path.basename(transcriptPath, '.jsonl'));
 }
+
+function jsonlIn(dir, re) {
+  try { return fs.readdirSync(dir).filter(f => re.test(f)).map(f => path.join(dir, f)); } catch { return []; }
+}
+
+/** Subagent transcripts of a session: Agent-tool subagents and every workflow run's agents. */
+function subagentFiles(transcriptPath) {
+  const dir = path.join(sessionDir(transcriptPath), 'subagents');
+  const out = jsonlIn(dir, /\.jsonl$/);
+  for (const run of workflowDirs(transcriptPath)) out.push(...jsonlIn(run, /^agent-.*\.jsonl$/));
+  return out;
+}
+
+function workflowDirs(transcriptPath) {
+  const dir = path.join(sessionDir(transcriptPath), 'subagents', 'workflows');
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => path.join(dir, e.name));
+  } catch { return []; }
+}
+
+// Per-file usage cache so a status line refresh only re-parses transcripts that grew.
+const WF_CACHE_FILE = path.join(DATA_DIR, 'workflow-cache.json');
+const WF_ACTIVE_MS = 120e3; // a run counts as active while something in it changed this recently
+
+function cachedTotals(file, cache, next, cfg) {
+  let st; try { st = fs.statSync(file); } catch { return null; }
+  let rec = cache[file];
+  if (!rec || rec.mtime !== st.mtimeMs || rec.size !== st.size) {
+    const a = analyzeTranscript(file, cfg);
+    rec = { mtime: st.mtimeMs, size: st.size, totals: a.totals, model: a.lastModel || null };
+  }
+  next[file] = rec;
+  return rec;
+}
+
+function workflowName(sessDir, runId) {
+  const scripts = path.join(sessDir, 'workflows', 'scripts');
+  try {
+    const f = fs.readdirSync(scripts).find(n => n.endsWith('-' + runId + '.js'));
+    if (f) return f.slice(0, -(runId.length + 4));
+  } catch {}
+  return 'workflow';
+}
+
+/**
+ * Workflow runs of a session, newest first: agents started/finished/running from the
+ * run's journal, tokens and cost per run, per phase and per model from each agent's
+ * transcript and meta.json.
+ */
+function workflowRuns(transcriptPath, cfg, now = Date.now()) {
+  if (!transcriptPath) return [];
+  cfg = cfg || loadConfig();
+  const cacheIn = readJson(WF_CACHE_FILE, { v: 1, files: {} });
+  const cache = cacheIn.v === 1 ? cacheIn.files : {};
+  const next = {};
+  const runs = [];
+  for (const dir of workflowDirs(transcriptPath)) {
+    const id = path.basename(dir);
+    const started = new Map(), finished = new Set();
+    let updated = 0;
+    const journal = path.join(dir, 'journal.jsonl');
+    try { updated = fs.statSync(journal).mtimeMs; } catch {}
+    for (const line of readLines(journal)) {
+      if (!line) continue;
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      if (o.type === 'started' && o.agentId) started.set(o.agentId, { label: o.label, phase: o.phase });
+      else if (o.type === 'result' && o.agentId) finished.add(o.agentId);
+    }
+    const totals = zeroTotals();
+    const byPhase = {}, byModel = {};
+    for (const file of jsonlIn(dir, /^agent-.*\.jsonl$/)) {
+      const agentId = path.basename(file, '.jsonl').replace(/^agent-/, '');
+      const rec = cachedTotals(file, cache, next, cfg);
+      if (!rec) continue;
+      updated = Math.max(updated, rec.mtime);
+      const meta = readJson(file.replace(/\.jsonl$/, '.meta.json'), {});
+      const phase = meta.workflowPhase || (started.get(agentId) || {}).phase || 'other';
+      const model = prettyModel(rec.model || meta.model || meta.pickedEffortModel || '') || 'model';
+      for (const k in totals) totals[k] += rec.totals[k];
+      const p = byPhase[phase] || (byPhase[phase] = { agents: 0, tokens: 0, cost: 0 });
+      p.agents++; p.tokens += tokensOf(rec.totals); p.cost += rec.totals.cost;
+      const m = byModel[model] || (byModel[model] = { agents: 0, tokens: 0, cost: 0 });
+      m.agents++; m.tokens += tokensOf(rec.totals); m.cost += rec.totals.cost;
+    }
+    const running = [...started.keys()].filter(a => !finished.has(a)).length;
+    const active = now - updated < WF_ACTIVE_MS;
+    runs.push({
+      id, name: workflowName(sessionDir(transcriptPath), id),
+      agents: started.size, done: finished.size, running: active ? running : 0,
+      stalled: !active && running > 0,
+      active, updated, totals, tokens: tokensOf(totals), cost: totals.cost, byPhase, byModel,
+    });
+  }
+  writeJson(WF_CACHE_FILE, { v: 1, files: next });
+  return runs.sort((x, y) => y.updated - x.updated);
+}
+
+function tokensOf(t) { return t.input + t.output + t.cacheRead + t.cacheWrite; }
 
 function findTranscript(sessionId) {
   if (!sessionId) return null;
@@ -327,6 +426,7 @@ function analyzeSession({ input, transcriptPath, cfg }) {
     compactions: main ? main.compactions : 0,
     sessionCost: totals.cost, reportedCost: costUsd,
     mcp: summarizeMcp(mcpCalls),
+    workflows: transcriptPath ? workflowRuns(transcriptPath, cfg) : [],
   };
 }
 
@@ -576,6 +676,6 @@ function allocateCells(values, total, width) {
 module.exports = {
   CLAUDE_DIR, DATA_DIR, SESSIONS_DIR, CATEGORIES, PLAN_BUDGETS,
   loadConfig, saveConfig, refreshStatusLine, readJson, writeJson, findTranscript,
-  analyzeSession, weeklyEstimate, calibrate, allocateCells,
+  analyzeSession, workflowRuns, weeklyEstimate, calibrate, allocateCells,
   fmtTok, fmtPct, fmtUsd, fmtUntil, fmtAgo,
 };

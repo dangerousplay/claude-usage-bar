@@ -18,6 +18,14 @@ Expanded (`/usage-bar:expand`) — adds detail lines:
 5h ━━──────── 18% +1 session ↻ 59m │ week ━━──────── 20% session <1% ↻ 4d 23h
 ```
 
+While a workflow runs (for example a `tlc-execute` run or any `/workflows` run), the collapsed line adds a segment for the newest active run: `⚙ tlc-execute 2▶ 19✓ 3.5M $4.21`, which shows agents running, agents done, tokens and cost. Expanded mode adds one line per run from the last hour, with tokens per phase and cost per model:
+
+```
+⚙ wf tlc-execute 405d7a7f-3e6 2 running · 19/21 agents · 3.5M $4.21 │ Implement 8× 2.1M  Verify 7× 1.0M  Commit 6× 300k │ Sonnet 5.5 $3.97  Haiku 5.5 $0.24
+```
+
+Session totals now include workflow agents (`subagents/workflows/wf_*/agent-*.jsonl`), not only Agent-tool subagents. Claude Code redraws the status line only on events, and background agents keep working while the main session is idle, so setup sets `refreshInterval` to 10 s. Use `--refresh <seconds>` to change it or `--refresh 0` to turn it off.
+
 Warnings stay visible even when collapsed: context ≥ 80% (compaction soon) and MCP errors from the last 10 minutes. `⟲` is cache read, `✎` cache write, `↑` output tokens.
 
 - **Context bar**: each category has its own color (system/tools/memory, your messages, Claude replies, tool calls, tool results, free space). The bar shows the % of the window used and the limit.

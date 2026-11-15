@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // Points ~/.claude/settings.json statusLine at this plugin's statusline.js (backs up first).
-// Usage: node setup.js [--remove] [--plan pro|max5|max20] [--compact]
+// Usage: node setup.js [--remove] [--plan pro|max5|max20] [--compact] [--refresh <seconds>|0]
 const fs = require('fs');
 const path = require('path');
 const L = require('./lib');
@@ -10,6 +10,11 @@ const settingsPath = path.join(L.CLAUDE_DIR, 'settings.json');
 const settings = L.readJson(settingsPath, {});
 const has = f => process.argv.includes(f);
 const planIdx = process.argv.indexOf('--plan');
+const refreshIdx = process.argv.indexOf('--refresh');
+// Background workflows and subagents run while the main session is idle, and the
+// status line only redraws on events, so poll by default (0 turns polling off).
+const refresh = refreshIdx >= 0 ? Number(process.argv[refreshIdx + 1]) : 10;
+if (!Number.isFinite(refresh) || refresh < 0) { console.error('--refresh needs a number of seconds (0 = off)'); process.exit(1); }
 
 if (fs.existsSync(settingsPath)) fs.copyFileSync(settingsPath, settingsPath + '.bak-claude-usage');
 
@@ -38,6 +43,7 @@ require(path.join(root, 'statusline.js'));
     console.log('Replacing existing statusLine: ' + JSON.stringify(settings.statusLine));
   }
   settings.statusLine = { type: 'command', command: `node "${script}"`, padding: 0 };
+  if (refresh > 0) settings.statusLine.refreshInterval = Math.max(1, Math.round(refresh));
   console.log('statusLine -> ' + settings.statusLine.command);
 }
 
